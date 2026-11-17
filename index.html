@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="fa" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#163e36">
+  <meta name="description" content="گزارش پیشرفت پروژه‌های درمانکده از مرداد ۱۴۰۵؛ بلاگ، پلتفرم و هلث بانک">
+  <title>گزارش پیشرفت | درمانکده</title>
+  <link rel="stylesheet" href="styles.css">
+  <script src="data.js" defer></script>
+  <script src="metrics.js" defer></script>
+  <script src="task-links.js" defer></script>
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">رفتن به محتوای گزارش</a>
+  <aside class="sidebar">
+    <a class="brand" href="#overview" aria-label="درمانکده، نمای کلی"><span class="brand-icon">✚</span><span>درمانکده<small>گزارش پیشرفت پروژه‌ها</small></span></a>
+    <div class="workspace-label">فضای کاری تیم سئو <span>۱۴۰۵</span></div>
+    <nav aria-label="بخش‌های گزارش">
+      <a href="#overview" data-nav="overview"><span class="nav-icon" data-icon="grid"></span>نمای کلی</a>
+      <div class="nav-label">پروژه‌ها</div>
+      <a href="#blog" data-nav="blog"><span class="nav-icon" data-icon="book"></span>بلاگ <span class="nav-count">۳</span></a>
+      <a href="#platform" data-nav="platform"><span class="nav-icon" data-icon="layers"></span>پلتفرم <span class="nav-count">۲</span></a>
+      <a href="#health" data-nav="health"><span class="nav-icon" data-icon="heart"></span>هلث بانک <span class="nav-count">۳</span></a>
+    </nav>
+    <a class="team" href="#panel" aria-label="تیم درمانکده؛ ورود به پنل"><span class="avatar">د</span><span>تیم درمانکده<small id="account-label">ورود به پنل</small></span><span class="team-arrow">←</span></a>
+  </aside>
+  <div class="shell">
+    <header class="topbar"><div class="breadcrumb">گزارش‌های مدیریتی <span>/</span> <strong id="crumb">نمای کلی</strong></div><div class="top-actions"><span class="manual"><i></i>داده‌های ثبت‌شده دستی</span><button class="icon-button" id="print" aria-label="چاپ یا ذخیره PDF" title="چاپ یا ذخیره PDF" data-icon="print"></button></div></header>
+    <main id="main" tabindex="-1"></main>
+    <footer><span>درمانکده <b>·</b> گزارش Milestone</span><span>صرفاً فعالیت‌های مرداد ۱۴۰۵ تا تاریخ گزارش؛ بدون سوابق قدیمی‌تر</span></footer>
+  </div>
+  <dialog id="info-dialog"><div class="dialog-head"><h2 id="dialog-title"></h2><button id="close-dialog" class="icon-button" aria-label="بستن">×</button></div><div id="dialog-body"></div></dialog>
+</body>
+</html>

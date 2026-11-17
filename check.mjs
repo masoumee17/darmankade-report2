@@ -1,0 +1,31 @@
+import {readFile} from 'node:fs/promises';
+import {runInNewContext} from 'node:vm';
+import assert from 'node:assert/strict';
+const ctx={URL};for(const file of ['data.js','metrics.js','task-links.js'])runInNewContext(await readFile(new URL(file,import.meta.url),'utf8'),ctx);
+const D=ctx.MILESTONE,M=ctx.MilestoneMetrics;
+const platform=M.platform(D),pages=M.pages(D);
+assert.equal(platform.total,1426);assert.equal(platform.done,215);assert.equal(platform.remaining,1211);
+assert.equal(pages.total,3426);assert.equal(pages.done,233);assert.equal(pages.remaining,3193);
+assert.equal(M.percent(null,2000),null);assert.equal(M.percent(0,18),0);assert.equal(M.percent(0,0),null);
+const feature=D.tasks.find(t=>t.id==='blog-features'),update=D.tasks.find(t=>t.id==='blog-update'),publish=D.tasks.find(t=>t.id==='blog-publish');
+assert.equal(M.forecast(feature,200,3).possible,600);assert.equal(M.forecast(feature,200,3).monthsToFinish,10);assert.equal(M.forecast(feature,200,12).possible,1997);
+assert.equal(M.forecast(update,11,3).possible,33);assert.equal(M.forecast(update,11,3).monthsToFinish,181);
+assert.equal(M.forecast(publish,11,3).possible,33);assert.equal(M.forecast(publish,11,3).recurring,true);
+assert.equal(M.forecast(feature,null,3),null);assert.equal(M.forecast(feature,11,1.5),null);assert.equal(M.forecast(feature,0,3),null);
+assert.equal(D.tasks.length,9);assert.equal(D.tasks.filter(t=>t.project==='health').length,3);
+assert.ok(D.tasks.some(t=>t.id==='health-content'));assert.ok(D.tasks.some(t=>t.id==='health-crawl'));
+assert.ok(D.tasks.filter(t=>t.project==='health').every(t=>t.done===null&&t.total===null));
+const monthly=M.campaigns(D);assert.equal(monthly.total,4);assert.equal(monthly.done,0);
+const copy=JSON.parse(JSON.stringify(D));copy.campaigns.records[0].completed=true;assert.equal(M.campaigns(copy).percent,25);assert.equal(M.pages(copy).done,233);
+for(const [id,capacity,possible,months]of [['platform-b',30,90,5],['platform-d',20,60,20],['platform-z',20,60,35]]){
+  const task=D.tasks.find(t=>t.id===id);assert.equal(task.monthlyCapacity,capacity);
+  assert.equal(M.forecast(task,capacity,3).possible,possible);
+  assert.equal(M.forecast(task,capacity,3).monthsToFinish,months);
+}
+for(const t of D.tasks)assert.ok(t.total===null||t.done===null||t.done<=t.total);
+const html=await readFile(new URL('index.html',import.meta.url),'utf8'),app=await readFile(new URL('app.js',import.meta.url),'utf8');
+assert.ok(!html.includes('sidebar-bottom'));assert.ok(!app.includes('class="stats"'));assert.ok(app.includes('ظرفیت ماهانه'));assert.ok(app.includes('پیش‌بینی'));
+assert.equal(ctx.TaskLinks.normalize(' https://docs.google.com/spreadsheets/d/example/edit '),'https://docs.google.com/spreadsheets/d/example/edit');
+for(const value of ['javascript:alert(1)','data:text/html,x','/relative/path','https://user:password@example.test/file'])assert.equal(ctx.TaskLinks.read(value),null);
+assert.equal(ctx.TaskLinks.normalize(''),null);assert.equal(ctx.TaskLinks.read(null),null);
+console.log('Verified: updated D/Z/B totals, remaining work, independent monthly campaigns, forecasts, merged Health Bank work, and removed KPI cards.');
