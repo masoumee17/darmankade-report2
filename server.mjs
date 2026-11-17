@@ -76,7 +76,7 @@ export async function createReportServer(options={}){
   function normalizeSection(id,content){
     if(id!=='platform'||!content.platformSummary?.breakdownConfirmed)return content;
     const pages=content.tasks.filter(t=>t.pageMetric);
-    if(!pages.length||!pages.every(t=>Number.isFinite(t.total)))return content;
+    if(!pages.every(t=>Number.isFinite(t.total)))return content;
     const total=pages.reduce((s,t)=>s+t.total,0),done=pages.every(t=>Number.isFinite(t.done))?pages.reduce((s,t)=>s+t.done,0):content.platformSummary.done;
     const number=v=>new Intl.NumberFormat('fa-IR').format(v);
     const details=pages.map(t=>`${t.title}: ${number(t.done)} انجام‌شده از ${number(t.total)}`).join('؛ ');
@@ -105,7 +105,7 @@ export async function createReportServer(options={}){
     if(Object.keys(body).some(k=>!allowed.has(k)))throw fail(400,'فیلد ویرایش معتبر نیست.');
     const updated={...t};
     if(body.documentUrl!==undefined){
-      if(t.project!=='blog')throw fail(400,'لینک فایل فقط برای فعالیت‌های بلاگ قابل ثبت است.');
+      if(!['blog','platform'].includes(t.project))throw fail(400,'لینک فایل برای فعالیت‌های بلاگ و پلتفرم قابل ثبت است.');
       try{updated.documentUrl=globalThis.TaskLinks.normalize(body.documentUrl);}catch(e){throw fail(400,e.message);}
     }
     if(body.title!==undefined){if(typeof body.title!=='string'||!body.title.trim()||body.title.length>160)throw fail(400,'عنوان فعالیت معتبر نیست.');updated.title=body.title.trim();}
@@ -154,22 +154,22 @@ export async function createReportServer(options={}){
         send(res,200,publicSession(s),{'Set-Cookie':cookieHeader(key)});return;
       }
       if(path==='/api/logout'&&req.method==='POST'){const s=await sessionOf(req);if(s&&req.headers['x-csrf-token']!==s.csrfToken)throw fail(403,'نشست معتبر نیست.');if(serverless&&s)try{await cloud('/auth/v1/logout?scope=local',s.access,'POST',{});}catch{}const key=token(req);if(key)sessions.delete(key);req._milestoneSession=null;send(res,200,{ok:true},{'Set-Cookie':cookieHeader('')});return;}
-      if(path.startsWith('/api/tasks/')&&req.method==='PATCH'){
+      if(path.startsWith('/api/tasks/')&&['PATCH','DELETE'].includes(req.method)){
         const id=decodeURIComponent(path.slice('/api/tasks/'.length));let task=report.tasks.find(t=>t.id===id);
         const s=await requireMember(req,task?.project??null);
         if(!task){await loadRemote(s);task=report.tasks.find(t=>t.id===id);}
         if(!task)throw fail(404,'فعالیت پیدا نشد.');
         if(!(s.member.role==='admin'||s.member.role==='editor'&&s.member.sections.includes(task.project)))throw fail(403,'حساب شما اجازه ویرایش این بخش را ندارد.');
         const b=await readBody(req);
-        const run=async()=>mutate(s,task.project,content=>{const i=content.tasks.findIndex(t=>t.id===id);if(i<0)throw fail(404,'فعالیت پیدا نشد.');content.tasks[i]=editTask(content.tasks[i],b);});
+        const run=async()=>mutate(s,task.project,content=>{const i=content.tasks.findIndex(t=>t.id===id);if(i<0)throw fail(404,'فعالیت پیدا نشد.');if(req.method==='DELETE')content.tasks.splice(i,1);else content.tasks[i]=editTask(content.tasks[i],b);});
         const action=mutationQueue.then(run);mutationQueue=action.catch(()=>{});send(res,200,await action);return;
       }
       if(path==='/api/tasks'&&req.method==='POST'){
         const b=await readBody(req);if(!['blog','platform','health'].includes(b.project))throw fail(400,'بخش انتخاب‌شده معتبر نیست.');
         const s=await requireMember(req,b.project);
-        if(b.project!=='blog'&&b.documentUrl!==undefined)throw fail(400,'لینک فایل فقط برای فعالیت‌های بلاگ قابل ثبت است.');
+        if(!['blog','platform'].includes(b.project)&&b.documentUrl!==undefined)throw fail(400,'لینک فایل برای فعالیت‌های بلاگ و پلتفرم قابل ثبت است.');
         for(const [key,max]of [['title',160],['type',80],['unit',30]])if(typeof b[key]!=='string'||!b[key].trim()||b[key].length>max)throw fail(400,'عنوان، نوع و واحد فعالیت را تکمیل کنید.');
-        const task=editTask({id:randomUUID(),project:b.project,title:b.title.trim(),description:'فعالیت تعریف‌شده توسط تیم',type:b.type.trim(),unit:b.unit.trim(),status:'planned',monthlyGoal:null,pageMetric:false,total:null,done:null,monthlyCapacity:null},{total:b.total??null,done:b.done??null,monthlyCapacity:b.monthlyCapacity??null,...(b.project==='blog'?{documentUrl:b.documentUrl??null}:{})});
+        const task=editTask({id:randomUUID(),project:b.project,title:b.title.trim(),description:'فعالیت تعریف‌شده توسط تیم',type:b.type.trim(),unit:b.unit.trim(),status:'planned',monthlyGoal:null,pageMetric:false,total:null,done:null,monthlyCapacity:null},{total:b.total??null,done:b.done??null,monthlyCapacity:b.monthlyCapacity??null,...(['blog','platform'].includes(b.project)?{documentUrl:b.documentUrl??null}:{})});
         const action=mutationQueue.then(()=>mutate(s,b.project,content=>content.tasks.push(task)));mutationQueue=action.catch(()=>{});send(res,201,{...await action,task});return;
       }
       if(path.startsWith('/api/campaigns/')&&req.method==='PATCH'){

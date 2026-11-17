@@ -58,16 +58,26 @@ try{
   assert.equal((await call('/api/report')).body.tasks.find(t=>t.id==='blog-update').documentUrl,documentUrl);
   assert.equal((await call('/api/tasks/blog-update','PATCH',{monthlyCapacity:12})).body.report.tasks.find(t=>t.id==='blog-update').documentUrl,documentUrl);
   for(const url of ['javascript:alert(1)','/relative','data:text/html,unsafe','https://user:pass@example.test/file'])assert.equal((await call('/api/tasks/blog-update','PATCH',{documentUrl:url})).res.status,400);
-  assert.equal((await call('/api/tasks/platform-d','PATCH',{documentUrl})).res.status,400);
+  for(const id of ['platform-d','platform-z','platform-b','blog-features']){
+    assert.equal((await call('/api/tasks/'+id,'PATCH',{documentUrl})).res.status,200);
+    assert.equal((await call('/api/report')).body.tasks.find(t=>t.id===id).documentUrl,documentUrl);
+  }
+  assert.equal((await call('/api/tasks/health-debug','PATCH',{documentUrl})).res.status,400);
   assert.equal((await call('/api/tasks/blog-update','PATCH',{documentUrl:''})).body.report.tasks.find(t=>t.id==='blog-update').documentUrl,null);
   assert.equal((await call('/api/campaigns/1405-05','PATCH',{completed:true})).res.status,200);
   assert.equal((await call('/api/report')).body.campaigns.records[0].completed,true);
   const created=await call('/api/tasks','POST',{project:'blog',title:'Synthetic test task',type:'Test',unit:'item',total:10,done:0,monthlyCapacity:2,documentUrl});assert.equal(created.res.status,201);
   assert.equal(created.body.report.tasks.find(t=>t.title==='Synthetic test task').documentUrl,documentUrl);
   assert.equal(created.body.task.id,created.body.report.tasks.find(t=>t.title==='Synthetic test task').id);
+  assert.equal((await call('/api/tasks/'+created.body.task.id,'DELETE',{}, {'X-CSRF-Token':'wrong'})).res.status,403);
+  assert.equal((await call('/api/tasks/'+created.body.task.id,'DELETE',{}, {Origin:'https://untrusted.example'})).res.status,403);
   role='editor';assigned=['blog'];assert.equal((await call('/api/tasks/platform-d','PATCH',{done:110})).res.status,403);
   assert.equal((await call('/api/campaigns/1405-05','PATCH',{completed:false})).res.status,403);
   assert.equal((await call('/api/tasks/blog-update','PATCH',{done:21})).res.status,200);
+  assert.equal((await call('/api/tasks/platform-d','DELETE',{})).res.status,403);
+  assert.equal((await call('/api/tasks/'+created.body.task.id,'DELETE',{})).res.status,200);
+  assert.ok(!(await call('/api/report')).body.tasks.some(t=>t.id===created.body.task.id));
+  assert.equal((await call('/api/tasks/'+created.body.task.id,'DELETE',{})).res.status,404);
   const scopedTasks={blog:'blog-update',platform:'platform-d',health:'health-debug'};
   for(const allowed of ['blog','platform','health']){
     role='editor';assigned=[allowed];
@@ -82,12 +92,27 @@ try{
     assert.equal((await call('/api/campaigns/1405-05','PATCH',{completed:true})).res.status,allowed==='platform'?200:403);
     assert.equal((await call('/api/tasks','POST',{project:allowed==='blog'?'platform':'blog',title:'Forbidden',type:'test',unit:'item'})).res.status,403);
   }
+  // Deleting the last baseline task leaves an empty but valid section.
+  role='editor';assigned=['health'];
+  for(const t of data.tasks.filter(t=>t.project==='health'))assert.equal((await call('/api/tasks/'+t.id,'DELETE',{})).res.status,200);
+  assert.equal((await call('/api/report')).body.tasks.filter(t=>t.project==='health').length,0);
+  role='editor';assigned=['blog'];
+  assert.equal((await call('/api/tasks/blog-update','DELETE',{})).res.status,200);
+  assert.ok(!(await call('/api/report')).body.tasks.some(t=>t.id==='blog-update'));
+  role='editor';assigned=['platform'];
+  for(const id of ['platform-d','platform-z','platform-b'])assert.equal((await call('/api/tasks/'+id,'DELETE',{})).res.status,200);
+  const emptyPlatform=(await call('/api/report')).body;
+  assert.equal(emptyPlatform.platformSummary.total,0);assert.equal(emptyPlatform.platformSummary.done,0);
+  assert.equal(emptyPlatform.campaigns.records.length,4);
+  const plp=await call('/api/tasks','POST',{project:'platform',title:'Custom PLP',type:'PLP',unit:'page',documentUrl});
+  assert.equal(plp.res.status,201);assert.equal(plp.body.task.documentUrl,documentUrl);
   role='viewer';assigned=['blog','platform','health'];
-  assert.equal((await call('/api/tasks/blog-update','PATCH',{done:22})).res.status,403);
+  assert.equal((await call('/api/tasks/blog-features','PATCH',{done:22})).res.status,403);
+  assert.equal((await call('/api/tasks/blog-features','DELETE',{})).res.status,403);
   const cache=await readFile(join(cacheDir,'report-cache.json'),'utf8');assert.ok(!cache.includes('synthetic-test-password'));assert.ok(!cache.includes('synthetic-access'));
   assert.equal((await call('/api/logout','POST',{})).res.status,200);
-  assert.equal((await call('/api/tasks/blog-update','PATCH',{done:22})).res.status,401);
-  console.log('Verified with mocked Supabase: password login, session cookie, CSRF, origin checks, role scopes, task validation, persisted edits, monthly ticks, and logout.');
+  assert.equal((await call('/api/tasks/blog-features','PATCH',{done:22})).res.status,401);
+  console.log('Verified with mocked Supabase: password login, session cookie, CSRF, origin checks, role scopes, task validation, persisted edits, monthly ticks, PLP/feature links, scoped deletion, empty sections, and logout.');
 }finally{
   await new Promise(resolve=>server.close(resolve));
   try{await unlink(join(cacheDir,'report-cache.json'));}catch{}

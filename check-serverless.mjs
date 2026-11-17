@@ -65,6 +65,10 @@ try{
   const doc='https://docs.google.com/document/d/synthetic-test/edit';
   assert.equal((await call(1,'tasks/blog-update','PATCH',{documentUrl:doc},admin)).res.status,200);
   assert.equal((await call(0,'report','GET',undefined,admin)).body.tasks.find(t=>t.id==='blog-update').documentUrl,doc);
+  for(const id of ['platform-d','blog-features']){
+    assert.equal((await call(1,'tasks/'+id,'PATCH',{documentUrl:doc},admin)).res.status,200);
+    assert.equal((await call(0,'report','GET',undefined,admin)).body.tasks.find(t=>t.id===id).documentUrl,doc);
+  }
   const custom=await call(1,'tasks','POST',{project:'health',title:'Synthetic custom health task',type:'test',unit:'item',total:10,done:0},admin);
   assert.equal(custom.res.status,201);
   const customTask=custom.body.report.tasks.find(t=>t.title==='Synthetic custom health task');
@@ -84,10 +88,17 @@ try{
   assert.equal(identity.body.user.id,identities[1].id);assert.equal(identity.body.user.role,'editor');
   assert.equal((await call(1,'tasks/platform-d','PATCH',{done:103},forged)).res.status,403);
   assert.equal((await call(1,'tasks/blog-update','PATCH',{documentUrl:doc},editor)).res.status,200);
+  const disposable=await call(1,'tasks','POST',{project:'blog',title:'Cold delete test',type:'test',unit:'item',documentUrl:doc},editor);
+  assert.equal(disposable.res.status,201);
+  assert.equal((await call(0,'tasks/'+customTask.id,'DELETE',{},editor)).res.status,403);
+  assert.equal((await call(0,'tasks/'+disposable.body.task.id,'DELETE',{},editor,{'X-CSRF-Token':'wrong'})).res.status,403);
+  assert.equal((await call(0,'tasks/'+disposable.body.task.id,'DELETE',{},editor)).res.status,200);
+  assert.ok(!(await call(1,'report','GET',undefined,editor)).body.tasks.some(t=>t.id===disposable.body.task.id));
+  assert.equal((await call(1,'tasks/'+disposable.body.task.id,'PATCH',{done:1},editor)).res.status,404);
   payload.access='invalid';payload.refresh='invalid';
   assert.equal((await call(1,'session','GET',undefined,{cookie:'__Host-milestone_session='+Buffer.from(JSON.stringify(payload)).toString('base64url')})).body.user,null);
   assert.equal((await call(1,'logout','POST',{},editor)).res.status,200);
   assert.equal((await call(0,'session','GET',undefined,editor)).body.user,null);
   await assert.rejects(access(cacheDir));
-  console.log('Verified: serverless routing, parsed request bodies, session portability, Supabase-verified identity, role forgery rejection, CSRF, document persistence, logout, and no filesystem writes.');
+  console.log('Verified: serverless routing, parsed request bodies, session portability, Supabase-verified identity, role forgery rejection, CSRF, PLP/feature link persistence, scoped deletion across instances, logout, and no filesystem writes.');
 }finally{await Promise.all(servers.map(s=>new Promise(resolve=>s.close(resolve))));}
