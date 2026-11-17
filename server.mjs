@@ -64,12 +64,12 @@ export async function createReportServer(options={}){
     return s.member;
   }
   async function refresh(s){if(s.tokenExpiresAt>Date.now()+30000)return;const a=await cloud('/auth/v1/token?grant_type=refresh_token',null,'POST',{refresh_token:s.refresh});s.access=a.access_token;s.refresh=a.refresh_token;s.tokenExpiresAt=Date.now()+a.expires_in*1000;}
-  async function requireMember(req,project){
+  async function requireMember(req,project=null){
     const s=await sessionOf(req);if(!s)throw fail(401,'برای ثبت تغییرات ابتدا وارد پنل شوید.');
     if(req.headers['x-csrf-token']!==s.csrfToken)throw fail(403,'نشست معتبر نیست؛ صفحه را تازه کنید و دوباره وارد شوید.');
     await refresh(s);const member=await membership(s);
     if(!s.databaseReady)throw fail(424,'برای فعال‌سازی ذخیره اطلاعات، فایل راه‌اندازی Supabase را اجرا کنید.');
-    if(!member||!(member.role==='admin'||member.role==='editor'&&member.sections.includes(project)))throw fail(403,'حساب شما اجازه ویرایش این بخش را ندارد.');
+    if(!member||project!==null&&!(member.role==='admin'||member.role==='editor'&&member.sections.includes(project)))throw fail(403,'حساب شما اجازه ویرایش این بخش را ندارد.');
     return s;
   }
   function sectionOf(data,id){return {tasks:data.tasks.filter(t=>t.project===id),...(id==='platform'?{platformSummary:data.platformSummary,campaigns:data.campaigns}:{})};}
@@ -155,8 +155,12 @@ export async function createReportServer(options={}){
       }
       if(path==='/api/logout'&&req.method==='POST'){const s=await sessionOf(req);if(s&&req.headers['x-csrf-token']!==s.csrfToken)throw fail(403,'نشست معتبر نیست.');if(serverless&&s)try{await cloud('/auth/v1/logout?scope=local',s.access,'POST',{});}catch{}const key=token(req);if(key)sessions.delete(key);req._milestoneSession=null;send(res,200,{ok:true},{'Set-Cookie':cookieHeader('')});return;}
       if(path.startsWith('/api/tasks/')&&req.method==='PATCH'){
-        const id=decodeURIComponent(path.slice('/api/tasks/'.length)),task=report.tasks.find(t=>t.id===id);if(!task)throw fail(404,'فعالیت پیدا نشد.');
-        const s=await requireMember(req,task.project),b=await readBody(req);
+        const id=decodeURIComponent(path.slice('/api/tasks/'.length));let task=report.tasks.find(t=>t.id===id);
+        const s=await requireMember(req,task?.project??null);
+        if(!task){await loadRemote(s);task=report.tasks.find(t=>t.id===id);}
+        if(!task)throw fail(404,'فعالیت پیدا نشد.');
+        if(!(s.member.role==='admin'||s.member.role==='editor'&&s.member.sections.includes(task.project)))throw fail(403,'حساب شما اجازه ویرایش این بخش را ندارد.');
+        const b=await readBody(req);
         const run=async()=>mutate(s,task.project,content=>{const i=content.tasks.findIndex(t=>t.id===id);if(i<0)throw fail(404,'فعالیت پیدا نشد.');content.tasks[i]=editTask(content.tasks[i],b);});
         const action=mutationQueue.then(run);mutationQueue=action.catch(()=>{});send(res,200,await action);return;
       }
@@ -166,7 +170,7 @@ export async function createReportServer(options={}){
         if(b.project!=='blog'&&b.documentUrl!==undefined)throw fail(400,'لینک فایل فقط برای فعالیت‌های بلاگ قابل ثبت است.');
         for(const [key,max]of [['title',160],['type',80],['unit',30]])if(typeof b[key]!=='string'||!b[key].trim()||b[key].length>max)throw fail(400,'عنوان، نوع و واحد فعالیت را تکمیل کنید.');
         const task=editTask({id:randomUUID(),project:b.project,title:b.title.trim(),description:'فعالیت تعریف‌شده توسط تیم',type:b.type.trim(),unit:b.unit.trim(),status:'planned',monthlyGoal:null,pageMetric:false,total:null,done:null,monthlyCapacity:null},{total:b.total??null,done:b.done??null,monthlyCapacity:b.monthlyCapacity??null,...(b.project==='blog'?{documentUrl:b.documentUrl??null}:{})});
-        const action=mutationQueue.then(()=>mutate(s,b.project,content=>content.tasks.push(task)));mutationQueue=action.catch(()=>{});send(res,201,await action);return;
+        const action=mutationQueue.then(()=>mutate(s,b.project,content=>content.tasks.push(task)));mutationQueue=action.catch(()=>{});send(res,201,{...await action,task});return;
       }
       if(path.startsWith('/api/campaigns/')&&req.method==='PATCH'){
         const month=path.slice('/api/campaigns/'.length),s=await requireMember(req,'platform'),b=await readBody(req);if(typeof b.completed!=='boolean')throw fail(400,'وضعیت ماه معتبر نیست.');

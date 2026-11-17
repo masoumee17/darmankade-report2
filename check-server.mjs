@@ -64,6 +64,7 @@ try{
   assert.equal((await call('/api/report')).body.campaigns.records[0].completed,true);
   const created=await call('/api/tasks','POST',{project:'blog',title:'Synthetic test task',type:'Test',unit:'item',total:10,done:0,monthlyCapacity:2,documentUrl});assert.equal(created.res.status,201);
   assert.equal(created.body.report.tasks.find(t=>t.title==='Synthetic test task').documentUrl,documentUrl);
+  assert.equal(created.body.task.id,created.body.report.tasks.find(t=>t.title==='Synthetic test task').id);
   role='editor';assigned=['blog'];assert.equal((await call('/api/tasks/platform-d','PATCH',{done:110})).res.status,403);
   assert.equal((await call('/api/campaigns/1405-05','PATCH',{completed:false})).res.status,403);
   assert.equal((await call('/api/tasks/blog-update','PATCH',{done:21})).res.status,200);

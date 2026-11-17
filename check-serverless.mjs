@@ -65,6 +65,14 @@ try{
   const doc='https://docs.google.com/document/d/synthetic-test/edit';
   assert.equal((await call(1,'tasks/blog-update','PATCH',{documentUrl:doc},admin)).res.status,200);
   assert.equal((await call(0,'report','GET',undefined,admin)).body.tasks.find(t=>t.id==='blog-update').documentUrl,doc);
+  const custom=await call(1,'tasks','POST',{project:'health',title:'Synthetic custom health task',type:'test',unit:'item',total:10,done:0},admin);
+  assert.equal(custom.res.status,201);
+  const customTask=custom.body.report.tasks.find(t=>t.title==='Synthetic custom health task');
+  assert.ok(customTask?.id);
+  // The other instance has never loaded this new task into its local snapshot.
+  const coldEdit=await call(0,'tasks/'+customTask.id,'PATCH',{done:1},admin);
+  assert.equal(coldEdit.res.status,200);
+  assert.equal(coldEdit.body.report.tasks.find(t=>t.id===customTask.id).done,1);
   assert.equal((await call(1,'tasks/blog-update','PATCH',{done:19},admin,{Origin:'https://other.example'})).res.status,403);
   assert.equal((await call(1,'tasks/blog-update','PATCH',{done:19},admin,{'X-CSRF-Token':'wrong'})).res.status,403);
   const second=await call(0,'login','POST',{username:identities[1].email,password:'synthetic-password'});
