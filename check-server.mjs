@@ -18,6 +18,7 @@ async function fakeCloud(url,options={}){
     if(v.email==='admin@example.test'&&v.password==='synthetic-test-password-only')return response({user:{id:userId,email:v.email},access_token:'synthetic-access',refresh_token:'synthetic-refresh',expires_in:3600});
     return response({message:'invalid'},400);
   }
+  if(u.pathname==='/rest/v1/rpc/milestone_public_report')return response(rows.map(({id,content})=>({id,content})));
   if(u.pathname==='/rest/v1/milestone_members')return response([{user_id:userId,display_name:'عضو آزمایشی',role,sections:assigned}]);
   if(u.pathname==='/rest/v1/milestone_sections'){
     const id=u.searchParams.get('id')?.replace('eq.','');

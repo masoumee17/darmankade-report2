@@ -19,7 +19,8 @@ export async function createReportServer(options={}){
   const persist=options.persistCache??!serverless;
   const cacheDir=options.cacheDir||join(root,'.local');
   const fetcher=options.fetcher||fetch;
-  let report=await seed();
+  const baseReport=await seed();
+  let report=clone(baseReport);
   if(persist)try{const cached=JSON.parse(await readFile(join(cacheDir,'report-cache.json'),'utf8'));if(cached.schemaVersion===report.schemaVersion)report=cached;}catch{}
   const sessions=new Map(),attempts=new Map();
   let mutationQueue=Promise.resolve();
@@ -82,15 +83,27 @@ export async function createReportServer(options={}){
     const details=pages.map(t=>`${t.title}: ${number(t.done)} انجام‌شده از ${number(t.total)}`).join('؛ ');
     return {...content,platformSummary:{...content.platformSummary,total,done,note:details}};
   }
-  function applySection(id,content){
+  function applySection(id,content,target=report){
     if(!Array.isArray(content?.tasks)||content.tasks.some(t=>t.project!==id))throw fail(502,'ساختار اطلاعات این بخش معتبر نیست.');
     content=normalizeSection(id,content);
-    report.tasks=report.tasks.filter(t=>t.project!==id).concat(content.tasks);
-    report.tasks.sort((a,b)=>report.projects.findIndex(p=>p.id===a.project)-report.projects.findIndex(p=>p.id===b.project));
-    if(id==='platform'){if(content.platformSummary)report.platformSummary=content.platformSummary;if(content.campaigns)report.campaigns=content.campaigns;}
+    target.tasks=target.tasks.filter(t=>t.project!==id).concat(content.tasks);
+    target.tasks.sort((a,b)=>target.projects.findIndex(p=>p.id===a.project)-target.projects.findIndex(p=>p.id===b.project));
+    if(id==='platform'){if(content.platformSummary)target.platformSummary=content.platformSummary;if(content.campaigns)target.campaigns=content.campaigns;}
   }
   async function persistCache(){if(!persist)return;await mkdir(cacheDir,{recursive:true});const dest=join(cacheDir,'report-cache.json');await writeFile(dest+'.tmp',JSON.stringify(report,null,2));await rename(dest+'.tmp',dest);}
   async function loadRemote(s){if(!s.member)return;const rows=await cloud('/rest/v1/milestone_sections?select=id,content,revision',s.access);for(const row of rows||[])applySection(row.id,row.content);if(rows?.length)await persistCache();}
+  async function publicReport(){
+    let rows;
+    try{rows=await cloud('/rest/v1/rpc/milestone_public_report',null);}
+    catch(e){if([401,403,424].includes(e.status))throw fail(424,'خواندن گزارش عمومی هنوز فعال نیست؛ مدیر گزارش باید فایل public-report.sql را در Supabase اجرا کند.');throw e;}
+    const ids=baseReport.projects.map(p=>p.id);
+    if(!Array.isArray(rows)||rows.length!==ids.length||new Set(rows.map(r=>r.id)).size!==ids.length||rows.some(r=>!ids.includes(r.id)))throw fail(503,'اطلاعات گزارش عمومی کامل دریافت نشد؛ کمی بعد دوباره تلاش کنید.');
+    // A new snapshot per request keeps anonymous reads independent of warm instances,
+    // member sessions, filesystem caches, and tasks deleted since the last request.
+    const fresh=clone(baseReport);
+    for(const row of rows)applySection(row.id,row.content,fresh);
+    return {...fresh,dataSource:'supabase-public'};
+  }
   async function mutate(s,id,fn){
     const prior=await cloud('/rest/v1/milestone_sections?select=id,content,revision&id=eq.'+encodeURIComponent(id),s.access);
     if(prior.length!==1)throw fail(424,'داده اولیه این بخش در Supabase وجود ندارد؛ راه‌اندازی را کامل کنید.');
@@ -143,7 +156,7 @@ export async function createReportServer(options={}){
         if(!req.headers['content-type']?.startsWith('application/json'))throw fail(415,'درخواست باید JSON باشد.');
       }
       if(path==='/api/session'&&req.method==='GET'){const s=await sessionOf(req);if(s){try{await refresh(s);await membership(s);}catch{sessions.delete(token(req));req._milestoneSession=null;send(res,200,publicSession(null),{'Set-Cookie':cookieHeader('')});return;}}send(res,200,publicSession(s));return;}
-      if(path==='/api/report'&&req.method==='GET'){const s=await sessionOf(req);if(s){await refresh(s);await membership(s);if(s.member)await loadRemote(s);}send(res,200,{...report,dataSource:s?.member?'supabase':'snapshot'});return;}
+      if(path==='/api/report'&&req.method==='GET'){const s=await sessionOf(req);if(s){await refresh(s);await membership(s);if(s.member){await loadRemote(s);send(res,200,{...report,dataSource:'supabase'});return;}}send(res,200,await publicReport());return;}
       if(path==='/api/login'&&req.method==='POST'){
         const ip=req.socket.remoteAddress||'local',now=Date.now();let rate=attempts.get(ip);if(!rate||rate.until<now){rate={count:0,until:now+15*60*1000};attempts.set(ip,rate);}if(++rate.count>10)throw fail(429,'تعداد تلاش‌ها زیاد شده؛ ۱۵ دقیقه بعد دوباره امتحان کنید.');
         const b=await readBody(req);if(typeof b.username!=='string'||typeof b.password!=='string'||b.username.length>254||b.password.length>256||!b.password)throw fail(400,'ایمیل حساب و رمز عبور را وارد کنید.');

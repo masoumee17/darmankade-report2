@@ -13,7 +13,7 @@ const identities=[
 ];
 const rows=data.projects.map(p=>({id:p.id,revision:0,content:{tasks:data.tasks.filter(t=>t.project===p.id),...(p.id==='platform'?{platformSummary:data.platformSummary,campaigns:data.campaigns}:{})}}));
 const reply=(body,status=200)=>new Response(JSON.stringify(body),{status,headers:{'Content-Type':'application/json'}});
-let revoked=new Set();
+let revoked=new Set(),publicReadFailure=null,publicReads=0;
 async function fakeCloud(url,options={}){
   const u=new URL(url),bearer=options.headers.Authorization?.replace('Bearer ','');
   const who=identities.find(i=>i.access===bearer&&!revoked.has(i.id));
@@ -24,6 +24,12 @@ async function fakeCloud(url,options={}){
   }
   if(u.pathname==='/auth/v1/user')return who?reply({id:who.id,email:who.email}):reply({},401);
   if(u.pathname==='/auth/v1/logout'){if(who)revoked.add(who.id);return reply({});}
+  if(u.pathname==='/rest/v1/rpc/milestone_public_report'){
+    assert.equal(bearer,undefined,'public reads must not borrow member credentials');publicReads++;
+    if(publicReadFailure==='network')throw Error('Synthetic outage');
+    if(publicReadFailure==='missing')return reply({code:'PGRST202'},404);
+    return reply(rows.slice(0,publicReadFailure==='partial'?1:rows.length).map(({id,content})=>({id,content})));
+  }
   if(!who)return reply({},401);
   if(u.pathname==='/rest/v1/milestone_members')return reply(u.searchParams.get('user_id')==='eq.'+who.id?[{user_id:who.id,role:who.role,sections:who.sections,display_name:'عضو آزمایشی'}]:[]);
   if(u.pathname==='/rest/v1/milestone_sections'){
@@ -39,7 +45,7 @@ async function fakeCloud(url,options={}){
 }
 const cacheDir=fileURLToPath(new URL('serverless-cache-must-not-be-created/',import.meta.url));
 const options={config:{url:'https://example.test',publishableKey:'test-public'},fetcher:fakeCloud,serverless:true,persistCache:false,cacheDir};
-const instances=await Promise.all([createReportServer(options),createReportServer(options)]);
+const instances=await Promise.all([createReportServer(options),createReportServer(options),createReportServer(options)]);
 const servers=[];
 for(const instance of instances){
   const handler=makeVercelHandler(Promise.resolve(instance));
@@ -55,6 +61,8 @@ async function call(index,route,method='GET',body,auth={},extra={}){
 }
 try{
   assert.equal((await call(0,'../supabase.config.json')).res.status,400);
+  const initial=await call(2,'report');assert.equal(initial.body.dataSource,'supabase-public');
+  assert.equal(initial.res.headers.get('cache-control'),'no-store');
   const login=await call(0,'login','POST',{username:identities[0].email,password:'synthetic-password'});
   assert.equal(login.res.status,200,JSON.stringify(login.body));
   const cookie=login.res.headers.get('set-cookie');assert.ok(cookie.startsWith('__Host-milestone_session='));assert.ok(cookie.includes('HttpOnly'));assert.ok(cookie.includes('Secure'));assert.ok(cookie.length<4096);
@@ -68,6 +76,12 @@ try{
   for(const id of ['platform-d','blog-features']){
     assert.equal((await call(1,'tasks/'+id,'PATCH',{documentUrl:doc},admin)).res.status,200);
     assert.equal((await call(0,'report','GET',undefined,admin)).body.tasks.find(t=>t.id===id).documentUrl,doc);
+  }
+  // No login, no save, and a previously unused server instance must show the same links.
+  for(const instance of [0,1,2]){
+    const guest=await call(instance,'report');assert.equal(guest.res.status,200);assert.equal(guest.body.dataSource,'supabase-public');
+    for(const id of ['blog-update','blog-features','platform-d'])assert.equal(guest.body.tasks.find(t=>t.id===id).documentUrl,doc);
+    assert.ok(!JSON.stringify(guest.body).includes(identities[0].email));
   }
   const custom=await call(1,'tasks','POST',{project:'health',title:'Synthetic custom health task',type:'test',unit:'item',total:10,done:0},admin);
   assert.equal(custom.res.status,201);
@@ -95,10 +109,26 @@ try{
   assert.equal((await call(0,'tasks/'+disposable.body.task.id,'DELETE',{},editor)).res.status,200);
   assert.ok(!(await call(1,'report','GET',undefined,editor)).body.tasks.some(t=>t.id===disposable.body.task.id));
   assert.equal((await call(1,'tasks/'+disposable.body.task.id,'PATCH',{done:1},editor)).res.status,404);
+  const publicAfterDelete=await call(2,'report');
+  assert.ok(!publicAfterDelete.body.tasks.some(t=>t.id===disposable.body.task.id));
+  assert.ok(publicAfterDelete.body.tasks.some(t=>t.id===customTask.id));
+  // Simulate a database change after instances have warmed, without any member request.
+  const liveBlog=rows.find(r=>r.id==='blog').content.tasks.find(t=>t.id==='blog-update');
+  liveBlog.documentUrl='https://docs.google.com/document/d/changed-without-panel/edit';
+  for(const instance of [0,1,2])assert.equal((await call(instance,'report')).body.tasks.find(t=>t.id==='blog-update').documentUrl,liveBlog.documentUrl);
+  liveBlog.documentUrl=null;
+  assert.equal((await call(2,'report')).body.tasks.find(t=>t.id==='blog-update').documentUrl,null);
+  for(const failure of ['network','partial','missing']){
+    publicReadFailure=failure;const failed=await call(2,'report');
+    assert.equal(failed.res.status,failure==='missing'?424:503);
+    assert.equal(failed.body.tasks,undefined,'failure must not silently serve stale seed/cache');
+  }
+  publicReadFailure=null;
+  assert.equal((await call(2,'report')).res.status,200);assert.ok(publicReads>=10);
   payload.access='invalid';payload.refresh='invalid';
   assert.equal((await call(1,'session','GET',undefined,{cookie:'__Host-milestone_session='+Buffer.from(JSON.stringify(payload)).toString('base64url')})).body.user,null);
   assert.equal((await call(1,'logout','POST',{},editor)).res.status,200);
   assert.equal((await call(0,'session','GET',undefined,editor)).body.user,null);
   await assert.rejects(access(cacheDir));
-  console.log('Verified: serverless routing, parsed request bodies, session portability, Supabase-verified identity, role forgery rejection, CSRF, PLP/feature link persistence, scoped deletion across instances, logout, and no filesystem writes.');
+  console.log('Verified: serverless routing, parsed request bodies, session portability, Supabase-verified identity, role forgery rejection, CSRF, PLP/feature link persistence, scoped deletion across instances, fresh anonymous reports after cold starts, public-read failures, logout, and no filesystem writes.');
 }finally{await Promise.all(servers.map(s=>new Promise(resolve=>s.close(resolve))));}

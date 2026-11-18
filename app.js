@@ -4,6 +4,7 @@
   const links=globalThis.TaskLinks;
   let current='overview', horizon=D.forecastMonths||3;
   let selectedTaskId=null;
+  let reportLoading=location.protocol!=='file:',reportError='';
   let session={ready:false,available:false,configured:false,user:null,csrfToken:null};
   const n=(v,d=0)=>v===null||v===undefined?'نامشخص':new Intl.NumberFormat('fa-IR',{maximumFractionDigits:d}).format(v);
   const pct=v=>v===null?'نامشخص':n(v,v>0&&v<10?2:1)+'٪';
@@ -68,14 +69,14 @@
     document.querySelector('#info-dialog').showModal();
   }
   async function api(path,options={}){
-    const res=await fetch(path,{...options,credentials:'same-origin',headers:{'Content-Type':'application/json',...(session.csrfToken?{'X-CSRF-Token':session.csrfToken}:{}),...options.headers}});
+    const res=await fetch(path,{cache:'no-store',...options,credentials:'same-origin',headers:{'Content-Type':'application/json',...(session.csrfToken?{'X-CSRF-Token':session.csrfToken}:{}),...options.headers}});
     let body;try{body=await res.json();}catch{throw Error('ارتباط با پنل برقرار نشد. صفحه را تازه کنید و دوباره تلاش کنید.');}
     if(!res.ok)throw Error(body.error||'ذخیره اطلاعات انجام نشد.');return body;
   }
   function authPage(){
     if(!session.ready)return `${title('پنل تیم درمانکده','در حال بررسی وضعیت ورود…','TEAM WORKSPACE')}<div class="panel">در حال بارگذاری…</div>`;
     if(!session.available){const localFile=location.protocol==='file:';return `${title('ورود به پنل','ارتباط با پنل برقرار نشده است.','TEAM WORKSPACE')}<div class="panel"><p>${localFile?'برای ورود، گزارش را از آدرس پیش‌نمایش محلی باز کنید.':'اتصال به پنل کامل نشد. دوباره تلاش کنید.'}</p>${localFile?'<a class="primary-button" href="http://127.0.0.1:4317/#panel">بازکردن پنل محلی</a>':'<button class="primary-button" id="retry-connection">تلاش دوباره</button>'}</div>`;}
-    return `${title('ورود به پنل تیم درمانکده','با ایمیل حساب و رمز عبور همان حساب وارد شوید.','TEAM WORKSPACE')}<section class="auth-card"><span class="auth-symbol">${icon('layers')}</span><h2>خوش آمدید</h2><p>پیشرفت فعالیت‌ها و کمپین‌های ماهانه را از پنل مدیریت کنید.</p><form id="auth-form"><label>نام کاربری (ایمیل حساب)<input name="username" type="email" autocomplete="username" value="${esc(session.defaultUsername||'')}" maxlength="254" required></label><label>رمز عبور<input name="password" type="password" autocomplete="current-password" maxlength="256" required></label><button type="submit" class="primary-button">ورود به پنل</button><p class="form-message" id="auth-message" role="status"></p></form>.</section>`;
+    return `${title('ورود به پنل تیم درمانکده','با ایمیل حساب و رمز عبور همان حساب وارد شوید.','TEAM WORKSPACE')}<section class="auth-card"><span class="auth-symbol">${icon('layers')}</span><h2>خوش آمدید</h2><p>پیشرفت فعالیت‌ها و کمپین‌های ماهانه را از پنل مدیریت کنید.</p><form id="auth-form"><label>نام کاربری (ایمیل حساب)<input name="username" type="email" autocomplete="username" value="${esc(session.defaultUsername||'')}" maxlength="254" required></label><label>رمز عبور<input name="password" type="password" autocomplete="current-password" maxlength="256" required></label><button type="submit" class="primary-button">ورود به پنل</button><p class="form-message" id="auth-message" role="status"></p></form></section>`;
   }
   function panelActivityList(tasks,projects){
     return `<section class="panel-activities" aria-label="تمام فعالیت‌های قابل ویرایش">${projects.map(p=>{
@@ -122,7 +123,7 @@
     if(auth)auth.addEventListener('submit',async e=>{e.preventDefault();await submitForm(auth,'#auth-message',async()=>{
       const values=Object.fromEntries(new FormData(auth));
       const result=await api('/api/login',{method:'POST',body:JSON.stringify({username:values.username,password:values.password})});
-      session={...session,...result,ready:true,available:true};D=await api('/api/report');render();
+      session={...session,...result,ready:true,available:true};D=await api('/api/report');reportError='';reportLoading=false;render();
     });});
     document.querySelector('#logout')?.addEventListener('click',async()=>{try{await api('/api/logout',{method:'POST',body:'{}'});session.user=null;session.csrfToken=null;render();}catch(e){const msg=document.querySelector('#edit-message');if(msg)msg.textContent=e.message;}});
     const deleteDialog=document.querySelector('#delete-task-dialog');
@@ -169,10 +170,12 @@
   function render(){
     const id=location.hash.slice(1)||'overview';current=['overview','panel',...D.projects.map(p=>p.id)].includes(id)?id:'overview';
     const name=current==='overview'?'نمای کلی':current==='panel'?'پنل تیم درمانکده':D.projects.find(p=>p.id===current).title;
-    document.querySelector('#main').innerHTML=current==='panel'?(session.user?dashboardPanel():authPage()):current==='overview'?overview():detail(current);
+    const reportNotice=reportError?notice(esc(reportError)+' <button class="text-button" id="retry-report">تلاش دوباره</button>',true):reportLoading?notice('در حال دریافت آخرین اطلاعات گزارش…'):'';
+    document.querySelector('#main').innerHTML=current==='panel'?(session.user?dashboardPanel():authPage()):reportNotice+(current==='overview'?overview():detail(current));
+    document.querySelector('#retry-report')?.addEventListener('click',()=>location.reload());
     document.querySelector('#crumb').textContent=name;document.title=`${name} | گزارش پیشرفت درمانکده`;
     document.querySelector('#account-label').textContent=session.user?'پنل '+(session.user.displayName||session.user.username):'ورود به پنل';
-    document.querySelector('.manual').innerHTML='<i></i>'+(session.user?'داده‌های ثبت‌شده تیم':'نسخه ثبت‌شده گزارش');
+    document.querySelector('.manual').innerHTML='<i></i>'+(reportError?'اطلاعات فعلی بارگذاری نشده':reportLoading?'در حال دریافت اطلاعات':D.dataSource?.startsWith('supabase')?'داده‌های ثبت‌شده تیم':'نسخه اولیه گزارش');
     document.querySelectorAll('[data-nav]').forEach(a=>{a.classList.toggle('active',a.dataset.nav===current);if(a.dataset.nav===current)a.setAttribute('aria-current','page');else a.removeAttribute('aria-current');if(a.dataset.nav!=='overview')a.querySelector('.nav-count').textContent=n(D.tasks.filter(t=>t.project===a.dataset.nav).length+(a.dataset.nav==='platform'?1:0));});
     document.querySelectorAll('[data-icon]').forEach(el=>el.innerHTML=icon(el.dataset.icon));
     document.querySelectorAll('[data-dialog]').forEach(el=>el.addEventListener('click',openInfo));
@@ -189,6 +192,12 @@
   document.querySelector('#info-dialog').addEventListener('click',e=>{if(e.target===e.currentTarget)e.currentTarget.close();});
   window.addEventListener('hashchange',()=>{render();window.scrollTo(0,0);document.querySelector('#main').focus({preventScroll:true});});
   render();
-  if(location.protocol!=='file:')Promise.all([api('/api/session'),api('/api/report')]).then(([auth,report])=>{session={...auth,ready:true,available:true};D=report;render();}).catch(()=>{session.ready=true;session.available=false;if(current==='panel')render();});
+  if(location.protocol!=='file:')Promise.allSettled([api('/api/session'),api('/api/report')]).then(([auth,result])=>{
+    session=auth.status==='fulfilled'?{...auth.value,ready:true,available:true}:{...session,ready:true,available:false};
+    reportLoading=false;
+    if(result.status==='fulfilled'){D=result.value;reportError='';}
+    else reportError='آخرین اطلاعات گزارش دریافت نشد. اعداد فعلی نسخه اولیه هستند و لینک فایل‌ها ممکن است نمایش داده نشوند. دوباره تلاش کنید؛ در صورت تکرار با مدیر گزارش هماهنگ کنید.';
+    render();
+  });
   else{session.ready=true;if(current==='panel')render();}
 })();
